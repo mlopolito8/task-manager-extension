@@ -1,0 +1,474 @@
+* { box-sizing: border-box; margin: 0; padding: 0; }
+
+body {
+  width: 380px;
+  min-height: 300px;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  font-size: 13px;
+  background: #e2e4ec;
+  color: #222;
+}
+
+#app { padding: 12px; }
+
+header h1 { font-size: 16px; font-weight: 700; margin-bottom: 10px; }
+
+section { margin-bottom: 12px; }
+
+input[type="text"], input[type="date"], select {
+  border: 1px solid #ddd;
+  border-radius: 6px;
+  padding: 6px 8px;
+  font-size: 13px;
+  background: #fff;
+  outline: none;
+}
+input[type="text"]:focus, input[type="date"]:focus, select:focus {
+  border-color: #6c63ff;
+}
+
+#task-title { width: 100%; margin-bottom: 6px; }
+
+.row { display: flex; gap: 6px; align-items: center; }
+.row select { flex: 1; }
+.row input[type="date"] { flex: 1.2; }
+
+button {
+  padding: 6px 12px;
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 600;
+  transition: opacity 0.15s;
+}
+button:hover { opacity: 0.85; }
+
+#add-btn { background: #6c63ff; color: #fff; white-space: nowrap; }
+#scan-btn { background: #0ea5e9; color: #fff; white-space: nowrap; }
+
+#scan-status { margin-top: 6px; font-size: 12px; color: #555; min-height: 16px; }
+
+h2 { font-size: 12px; font-weight: 700; text-transform: uppercase;
+  letter-spacing: 0.05em; color: #888; margin-bottom: 6px; }
+.done-header { margin-top: 10px; }
+
+.count {
+  display: inline-block;
+  background: #e0e0e0;
+  border-radius: 10px;
+  padding: 0 6px;
+  font-size: 11px;
+  margin-left: 4px;
+}
+
+/* Task card */
+.task-card {
+  background: #fff;
+  border-radius: 8px;
+  padding: 8px 10px;
+  margin-bottom: 6px;
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.07);
+  border-left: 4px solid #ddd;
+}
+.task-card.high   { border-left-color: #ef4444; }
+.task-card.medium { border-left-color: #f59e0b; }
+.task-card.low    { border-left-color: #22c55e; }
+.task-card.done-card { opacity: 0.5; }
+
+.task-card input[type="checkbox"] { margin-top: 2px; cursor: pointer; }
+
+.task-info { flex: 1; }
+.task-title { font-weight: 600; word-break: break-word; }
+.task-title.strikethrough { text-decoration: line-through; color: #aaa; }
+.task-meta { font-size: 11px; color: #888; margin-top: 2px; }
+.overdue { color: #ef4444 !important; font-weight: 600; }
+
+.task-actions { display: flex; gap: 4px; }
+.del-btn {
+  background: none; border: none; color: #ccc;
+  font-size: 15px; padding: 0 2px; cursor: pointer;
+}
+.del-btn:hover { color: #ef4444; }
+
+/* Priority badge */
+.badge {
+  font-size: 10px; font-weight: 700; border-radius: 4px;
+  padding: 1px 5px; text-transform: uppercase;
+}
+.badge.high   { background: #fee2e2; color: #ef4444; }
+.badge.medium { background: #fef3c7; color: #d97706; }
+.badge.low    { background: #dcfce7; color: #16a34a; }
+
+/* Suggestions */
+.suggestion-card {
+  background: #fff;
+  border-radius: 8px;
+  padding: 8px 10px;
+  margin-bottom: 6px;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.07);
+  border-left: 4px solid #6c63ff;
+}
+.suggestion-title { font-weight: 600; margin-bottom: 4px; }
+.suggestion-meta  { font-size: 11px; color: #888; margin-bottom: 6px; }
+.suggestion-actions { display: flex; gap: 6px; }
+.accept-btn { background: #22c55e; color: #fff; font-size: 12px; padding: 4px 10px; }
+.reject-btn { background: #e5e7eb; color: #555; font-size: 12px; padding: 4px 10px; }
+
+.hidden { display: none !important; }
+
+#api-key-section {
+  background: #fffbeb;
+  border: 1px solid #fde68a;
+  border-radius: 8px;
+  padding: 10px;
+  margin-bottom: 12px;
+}
+#api-key-section p { font-size: 12px; color: #92400e; margin-bottom: 6px; }
+#api-key-input { width: 100%; margin-bottom: 6px; font-size: 12px; }
+#save-key-btn { background: #f59e0b; color: #fff; font-size: 12px; }
+```
+
+---
+
+## 📄 popup.js
+
+```js
+const $ = id => document.getElementById(id);
+const PRIORITY_ORDER = { high: 0, medium: 1, low: 2 };
+
+let tasks = [];
+let apiKey = '';
+
+// ── Init ──────────────────────────────────────────────
+document.addEventListener('DOMContentLoaded', async () => {
+  const data = await chrome.storage.local.get(['tasks', 'apiKey']);
+  tasks = data.tasks || [];
+  apiKey = data.apiKey || '';
+  if (!apiKey) injectApiKeyUI();
+  renderTasks();
+  bindEvents();
+});
+
+function bindEvents() {
+  $('add-btn').addEventListener('click', addTask);
+  $('task-title').addEventListener('keydown', e => { if (e.key === 'Enter') addTask(); });
+  $('scan-btn').addEventListener('click', scanInbox);
+}
+
+// ── API Key UI ────────────────────────────────────────
+function injectApiKeyUI() {
+  const sec = document.createElement('div');
+  sec.id = 'api-key-section';
+  sec.innerHTML = `
+    🔑 Enter your Anthropic API key to enable inbox suggestions:
+    
+    Save Key`;
+  $('app').insertBefore(sec, $('add-task'));
+  setTimeout(() => {
+    $('save-key-btn').addEventListener('click', async () => {
+      const key = $('api-key-input').value.trim();
+      if (!key.startsWith('sk-')) return alert('Invalid key format.');
+      apiKey = key;
+      await chrome.storage.local.set({ apiKey });
+      sec.remove();
+    });
+  }, 0);
+}
+
+// ── Add Task ──────────────────────────────────────────
+function addTask(title, priority, deadline) {
+  const t = (title || $('task-title').value).trim();
+  if (!t) return;
+  const p = priority || $('task-priority').value;
+  const d = deadline || $('task-deadline').value;
+  tasks.push({ id: Date.now(), title: t, priority: p, deadline: d, done: false });
+  saveTasks();
+  if (!title) { $('task-title').value = ''; $('task-deadline').value = ''; }
+  renderTasks();
+}
+
+// ── Toggle / Delete ───────────────────────────────────
+function toggleTask(id) {
+  const t = tasks.find(t => t.id === id);
+  if (t) { t.done = !t.done; saveTasks(); renderTasks(); }
+}
+function deleteTask(id) {
+  tasks = tasks.filter(t => t.id !== id);
+  saveTasks();
+  renderTasks();
+}
+
+// ── Render ────────────────────────────────────────────
+function renderTasks() {
+  const active = tasks.filter(t => !t.done)
+    .sort((a, b) => PRIORITY_ORDER[a.priority] - PRIORITY_ORDER[b.priority]);
+  const done   = tasks.filter(t => t.done);
+
+  $('active-count').textContent = active.length;
+  $('done-count').textContent   = done.length;
+  $('active-tasks').innerHTML   = active.map(taskCard).join('') || 'No active tasks.';
+  $('done-tasks').innerHTML     = done.map(t => taskCard(t, true)).join('');
+
+  document.querySelectorAll('.task-card input[type="checkbox"]').forEach(cb => {
+    cb.addEventListener('change', () => toggleTask(+cb.dataset.id));
+  });
+  document.querySelectorAll('.del-btn').forEach(btn => {
+    btn.addEventListener('click', () => deleteTask(+btn.dataset.id));
+  });
+}
+
+function taskCard(t, isDone = false) {
+  const today = new Date().toISOString().split('T')[0];
+  const overdue = t.deadline && t.deadline < today && !t.done;
+  const deadlineStr = t.deadline
+    ? `${overdue ? '⚠️ ' : '📅 '}${t.deadline}`
+    : '';
+  return `
+    
+      
+      
+        ${esc(t.title)}
+        
+          ${t.priority}
+          ${deadlineStr}
+        
+      
+      
+        ✕
+      
+    `;
+}
+
+// ── Scan Inbox ────────────────────────────────────────
+async function scanInbox() {
+  if (!apiKey) return alert('Please enter your Anthropic API key first.');
+  const choice = $('inbox-choice').value;
+  const url = choice === 'gmail'
+    ? 'https://mail.google.com/mail/u/0/#inbox'
+    : 'https://outlook.live.com/mail/0/inbox';
+
+  setStatus('Opening inbox tab…');
+
+  // Open or find the tab
+  const tabs = await chrome.tabs.query({ url: choice === 'gmail'
+    ? 'https://mail.google.com/*'
+    : ['https://outlook.live.com/*', 'https://outlook.office.com/*'] });
+
+  let tab;
+  if (tabs.length > 0) {
+    tab = tabs[0];
+    await chrome.tabs.update(tab.id, { active: true });
+  } else {
+    tab = await chrome.tabs.create({ url });
+    await waitForTab(tab.id);
+  }
+
+  setStatus('Starting inbox scan — clicking through emails…');
+
+  // Inject scraper and poll title for progress updates
+  let emails = [];
+  try {
+    // Start the async scrape (executeScript can't await async funcs, so we inject a self-invoking wrapper)
+    await chrome.scripting.executeScript({
+      target: { tabId: tab.id },
+      func: async (provider, max) => {
+        window.__scrapeResult = null;
+        window.__scrapeResult = await scrapeEmails(provider, max);
+      },
+      args: [choice, 5]
+    });
+
+    // Poll for progress via tab title, then retrieve result
+    const pollResult = await new Promise((resolve) => {
+      let attempts = 0;
+      const iv = setInterval(async () => {
+        attempts++;
+        try {
+          // Read progress from title
+          const titleResult = await chrome.scripting.executeScript({
+            target: { tabId: tab.id },
+            func: () => ({ title: document.title, result: window.__scrapeResult })
+          });
+          const { title, result } = titleResult[0]?.result || {};
+          const m = title?.match(/__SCRAPING__(\d+)\/(\d+)/);
+          if (m) setStatus(`Reading email ${m[1]} of ${m[2]}…`);
+          if (result !== null && result !== undefined) {
+            clearInterval(iv);
+            resolve(result);
+          }
+          if (attempts > 60) { clearInterval(iv); resolve([]); } // 30s timeout
+        } catch { clearInterval(iv); resolve([]); }
+      }, 500);
+    });
+    emails = pollResult;
+  } catch (e) {
+    setStatus('⚠️ Could not scrape inbox. Make sure the inbox page is loaded.');
+    return;
+  }
+
+  if (!emails.length) {
+    setStatus('No emails found. Is your inbox open and loaded?');
+    return;
+  }
+
+  setStatus(`Read ${emails.length} email(s). Asking Claude for suggestions…`);
+
+  const suggestions = await getSuggestions(emails);
+  if (!suggestions.length) {
+    setStatus('No actionable to-dos found in your inbox.');
+    return;
+  }
+
+  setStatus(`✅ ${suggestions.length} suggestion(s) ready.`);
+  renderSuggestions(suggestions);
+}
+
+// Runs in the context of the inbox tab — clicks through top N emails and scrapes subject + body
+async function scrapeEmails(provider, maxEmails) {
+  const wait = ms => new Promise(r => setTimeout(r, ms));
+  const emails = [];
+
+  if (provider === 'gmail') {
+    // Collect inbox row elements
+    const rows = [...document.querySelectorAll('tr.zA')].slice(0, maxEmails);
+    for (let i = 0; i < rows.length; i++) {
+      try {
+        // Update status via title (popup polls this)
+        document.title = `__SCRAPING__${i + 1}/${rows.length}`;
+        rows[i].click();
+        await wait(1800); // wait for email to load
+
+        const subjectEl = document.querySelector('h2.hP');
+        const subject = subjectEl?.innerText?.trim() || '(no subject)';
+
+        // Grab all body text blocks
+        const bodyParts = [...document.querySelectorAll('div.a3s.aiL, div.ii.gt div')]
+          .map(el => el.innerText?.trim())
+          .filter(t => t && t.length > 10);
+        const body = bodyParts.join('\n').slice(0, 1500); // cap per email
+
+        if (subject || body) emails.push({ subject, body });
+
+        // Go back to inbox
+        const backBtn = document.querySelector('button[aria-label="Back to Inbox"], div[aria-label="Back to Inbox"]');
+        if (backBtn) { backBtn.click(); await wait(800); }
+        else { window.history.back(); await wait(800); }
+      } catch (e) { /* skip this email */ }
+    }
+  } else {
+    // Outlook: collect message list items
+    const rows = [...document.querySelectorAll('div[role="option"][aria-label]')].slice(0, maxEmails);
+    for (let i = 0; i < rows.length; i++) {
+      try {
+        document.title = `__SCRAPING__${i + 1}/${rows.length}`;
+        rows[i].click();
+        await wait(1800);
+
+        const subjectEl = document.querySelector('div[role="heading"][aria-level="2"], h1[role="heading"]');
+        const subject = subjectEl?.innerText?.trim() || '(no subject)';
+
+        const bodyParts = [...document.querySelectorAll('div[role="document"], div.allowTextSelection')]
+          .map(el => el.innerText?.trim())
+          .filter(t => t && t.length > 10);
+        const body = bodyParts.join('\n').slice(0, 1500);
+
+        if (subject || body) emails.push({ subject, body });
+        // Outlook keeps reading pane open — no back navigation needed
+      } catch (e) { /* skip */ }
+    }
+  }
+
+  document.title = '__SCRAPING_DONE__';
+  return emails;
+}
+
+// ── Claude API ────────────────────────────────────────
+async function getSuggestions(emails) {
+  const emailBlock = emails.map((e, i) =>
+    `Email ${i + 1}:\nSubject: ${e.subject}\nBody:\n${e.body || '(no body)'}`
+  ).join('\n\n---\n\n');
+
+  const prompt = `You are a productivity assistant. Given the following emails (subject + body), identify up to 5 that require a follow-up action or task. For each, suggest a concise to-do title (max 80 chars), a priority (high/medium/low), and an optional deadline (YYYY-MM-DD or null). Reply ONLY with a JSON array like:
+[{"title":"...","priority":"high","deadline":"2025-06-20"},...]
+
+Emails:
+${emailBlock}`;
+
+  try {
+    const res = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-api-key': apiKey,
+        'anthropic-version': '2023-06-01',
+        'anthropic-dangerous-direct-browser-access': 'true'
+      },
+      body: JSON.stringify({
+        model: 'claude-sonnet-4-6',
+        max_tokens: 1000,
+        messages: [{ role: 'user', content: prompt }]
+      })
+    });
+    const data = await res.json();
+    if (data.error) { setStatus('Claude API error: ' + data.error.message); return []; }
+    const text = data.content.map(b => b.text || '').join('');
+    const clean = text.replace(/```json|```/g, '').trim();
+    return JSON.parse(clean);
+  } catch (e) {
+    setStatus('Failed to get suggestions: ' + e.message);
+    return [];
+  }
+}
+
+// ── Render Suggestions ────────────────────────────────
+function renderSuggestions(suggestions) {
+  const sec = $('suggestions-section');
+  const list = $('suggestions-list');
+  sec.classList.remove('hidden');
+  list.innerHTML = suggestions.map((s, i) => `
+    
+      ${esc(s.title)}
+      
+        ${s.priority}
+        ${s.deadline ? `📅 ${s.deadline}` : ''}
+      
+      
+        ✅ Add
+        ❌ Dismiss
+      
+    `).join('');
+
+  list.querySelectorAll('.accept-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const s = suggestions[+btn.dataset.i];
+      addTask(s.title, s.priority, s.deadline || '');
+      document.getElementById(`sug-${btn.dataset.i}`).remove();
+      if (!list.children.length) sec.classList.add('hidden');
+    });
+  });
+  list.querySelectorAll('.reject-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      document.getElementById(`sug-${btn.dataset.i}`).remove();
+      if (!list.children.length) sec.classList.add('hidden');
+    });
+  });
+}
+
+// ── Helpers ───────────────────────────────────────────
+function saveTasks() { chrome.storage.local.set({ tasks }); }
+function setStatus(msg) { $('scan-status').textContent = msg; }
+function esc(s) { return s.replace(/&/g,'&').replace(//g,'>'); }
+function waitForTab(id) {
+  return new Promise(resolve => {
+    chrome.tabs.onUpdated.addListener(function fn(tabId, info) {
+      if (tabId === id && info.status === 'complete') {
+        chrome.tabs.onUpdated.removeListener(fn);
+        resolve();
+      }
+    });
+  });
+}
